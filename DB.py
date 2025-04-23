@@ -1,7 +1,5 @@
 from langchain_chroma import Chroma
-# from langchain_together import TogetherEmbeddings
 from langchain_community.document_loaders import PyPDFLoader
-# from langchain_text_splitters import RecursiveCharacterTextSplitter
 from util import check_exist
 import time
 import uuid
@@ -12,48 +10,51 @@ from langchain_together import ChatTogether
 from langchain.storage import InMemoryStore
 from langchain.retrievers.multi_vector import MultiVectorRetriever
 from langchain.schema import Document
+import os
+from dotenv import load_dotenv
 
-
+# Load environment variables from .env file
+load_dotenv()
 
 class PDFLoader:
     def __init__(self, path):
         self.pdf_path = path
-        # self.text_llm = ChatGoogleGenerativeAI(
-        #     model="gemini-1.5-pro",
-        #     api_key="AIzaSyCuwAN1ZJaGUUUyJKemHFmW_EzJQszYnxE"
-        # )
+
+        # Retrieve API keys from environment variables
+        together_api_key = os.getenv("TOGETHER_API_KEY")
+        google_api_key = os.getenv("GOOGLE_API_KEY")
+
+        # Validate API keys
+        if not together_api_key:
+            raise ValueError("TOGETHER_API_KEY not found in environment variables")
+        if not google_api_key:
+            raise ValueError("GOOGLE_API_KEY not found in environment variables")
 
         self.text_llm = ChatTogether(
             model="meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",
-            together_api_key="84e8df9a595039765758ae96105665d37e873e9619a2c209ee31a108db5875ef"
+            together_api_key=together_api_key
         )
         self.vision_llm = ChatTogether(
             model="meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo",
-            together_api_key="84e8df9a595039765758ae96105665d37e873e9619a2c209ee31a108db5875ef"
-
+            together_api_key=together_api_key
         )
 
         self.embedding = GoogleGenerativeAIEmbeddings(
-            google_api_key="AIzaSyCuwAN1ZJaGUUUyJKemHFmW_EzJQszYnxE",
+            google_api_key=google_api_key,
             model="models/embedding-001",
         )
 
         chunks = partition_pdf(
-            filename = self.pdf_path,
+            filename=self.pdf_path,
             infer_table_structure=True,
             strategy="hi_res",
             extract_image_block_types=["Image"],   # Add 'Table' to list to extract image of tables
-            # image_output_dir_path=output_path,   # if None, images and tables will saved in base64
-
             extract_image_block_to_payload=True,   # if true, will extract base64 for API usage
-
             chunking_strategy="by_title",          # or 'basic'
             max_characters=10000,                  # defaults to 500
             combine_text_under_n_chars=2000,       # defaults to 0
             new_after_n_chars=6000,
         )
-        # print(set([str(type(el)) for el in chunks]))
-        # print(chunks[:5])
         
         self.chunks = chunks
         self.texts, self.tables = self.get_text_tables()
@@ -71,7 +72,6 @@ class PDFLoader:
         )
         self.bind_data()
 
-    
     def bind_data(self):
         doc_ids = [str(uuid.uuid4()) for _ in self.texts]
         summary_texts = [
@@ -95,13 +95,9 @@ class PDFLoader:
         self.retriever.vectorstore.add_documents(summary_imgs)
         self.retriever.docstore.mset(list(zip(img_ids, self.images)))
 
-
-
-
-
     def create_img_summary(self):
         img_summaries = []
-        print(f"Runnign Summary fir {len(self.images)} Images.")
+        print(f"Running Summary for {len(self.images)} Images.")
         for element in self.images:
             prompt_text = HumanMessage(
                 content=[
@@ -116,12 +112,11 @@ class PDFLoader:
             img_summaries.append(result.content)
         return img_summaries
 
-
     def create_summary(self):
         text_summaries = []
         table_summaries = []
         count = 0
-        print(f"Runnning Summary for {len(self.texts)} texts.")
+        print(f"Running Summary for {len(self.texts)} texts.")
         for element in self.texts:
             prompt_text = f"""
             You are an assistant tasked with summarizing tables and text.
@@ -133,7 +128,7 @@ class PDFLoader:
 
             Table or text chunk: {element}
             """
-            count+=1
+            count += 1
             print(f"API Usage: {count}")
             if count % 10 == 0:
                 print(f"Sleeping..")
@@ -152,16 +147,12 @@ class PDFLoader:
 
             Table or text chunk: {element}
             """
-            count+=1
+            count += 1
             print(f"API Usage: {count}")
-            # if count % 10 == 0:
-            #     print(f"Sleeping..")
-            #     time.sleep(0.5)
             result = self.text_llm.invoke([HumanMessage(prompt_text)])
             table_summaries.append(result.content)
         
         return text_summaries, table_summaries
-
 
     def get_text_tables(self):
         tables = []
@@ -169,7 +160,6 @@ class PDFLoader:
         for chunk in self.chunks:
             if "Table" in str(type(chunk)):
                 tables.append(chunk)
-
             if "CompositeElement" in str(type(chunk)):
                 texts.append(chunk)
         return texts, tables
@@ -183,7 +173,6 @@ class PDFLoader:
                     if "Image" in str(type(el)):
                         image_b64.append(el.metadata.image_base64)
         return image_b64
-        
 
     def getchunks(self):
         return self.chunks
